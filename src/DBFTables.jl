@@ -451,7 +451,8 @@ write(path::AbstractString, tbl) = (open(io -> write(io, tbl), touch(path), "w")
 
 function write(io::IO, tbl)
     dct = Tables.dictcolumntable(tbl)
-    fields = [FieldDescriptor(k, v) for (k,v) in pairs(getfield(dct, :values))]
+    columns = getfield(dct, :values)
+    fields = [FieldDescriptor(k, v) for (k,v) in pairs(columns)]
     records = UInt32(length(first(dct)))
     fieldcolumns = Dict{Symbol,Int}(f.name => i for (i,f) in enumerate(fields))
     hsize = UInt16(length(fields) * 32 + 32 + 1) # +1 for the 0xD delimiter
@@ -467,21 +468,26 @@ function write(io::IO, tbl)
     h = Header(version, last_update, records, hsize, rsize, incomplete, encrypted, mdx, lang_id, fields, fieldcolumns)
     out = Base.write(io, h)
 
-    for row in Tables.rows(dct)
-        out += write_record(io, fields, row)
+    # Fill the records one column at a time, so there is no dynamic call per value.
+    # Each record starts with the deletion marker ' ' (valid), '*' is deleted.
+    data = fill(UInt8(' '), Int(rsize) * Int(records))
+    offset = 1
+    for (field, column) in zip(fields, values(columns))
+        write_column!(data, Int(rsize), offset, Val(field.dbf_type), field.length, column)
+        offset += field.length
     end
+    out += Base.write(io, data)
     out += Base.write(io, 0x1a)  # EOF marker
     return out
 end
 
-function write_record(io::IO, fd::Vector{FieldDescriptor}, row)
-    out = 0
-    out += Base.write(io, ' ')  # deletion marker ' '=valid, '*'=deleted
-    for (field, val) in zip(fd, row)
-        out += Base.write(io, dbf_value(field, val))
+function write_column!(data::Vector{UInt8}, rsize::Int, offset::Int, dbf_type::Val, len::UInt8, column)
+    for (i, val) in enumerate(column)
+        copy_value!(data, (i - 1) * rsize + offset + 1, dbf_value(dbf_type, len, val))
     end
-    return out
 end
+copy_value!(data, i, s::AbstractString) = copyto!(data, i, codeunits(s), 1, ncodeunits(s))
+copy_value!(data, i, c::Char) = (data[i] = UInt8(c))  # only 'T', 'F' and '?'
 
 
 
