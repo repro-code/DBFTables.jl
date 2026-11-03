@@ -24,7 +24,7 @@ function FieldDescriptor(name::Symbol, data::AbstractVector)
     elseif T === Union{}  # data is only missings
         len = 0x01
     elseif char === 'C'
-        width = maximum(x -> ncodeunits(string(x)), itr)
+        width = maximum(x -> ncodeunits(string(x)), itr; init = 0)
         width > 254 && error("String data must be <254 characters due to DBF limitations.  Found: $width.")
         len = UInt8(width)
     elseif char === 'N'
@@ -338,7 +338,8 @@ function _create_stringarray(header::Header, data::AbstractVector)
     # the lengths are equal for each record
     lengths = repeat(lengths_record, 1, header.records)
     # the offsets accumulate over records with the record size
-    row_offsets = range(0; length = header.records, step = header.rsize)
+    # Int, because an unsigned length of 0 would wrap around
+    row_offsets = range(0; length = Int(header.records), step = Int(header.rsize))
     offsets = repeat(offsets_record, 1, header.records)
     offsets .+= reshape(row_offsets, 1, :)
 

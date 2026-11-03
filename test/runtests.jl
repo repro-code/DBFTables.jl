@@ -53,6 +53,9 @@ end
         @test roundtrip([(x=today(), y=missing), (x=missing, y=today())])
         @test roundtrip([(; x=1.0), (; x=missing)])
         @test roundtrip([(; x=missing), (; x=missing)])
+        # zero rows
+        @test roundtrip(df[1:0, :])
+        @test size(DBFTables.Table(DBFTables.write(tempname(), df[1:0, :]))) == (0, 6)
 
         @test_warn "No DBF type associated with Julia type Vector{Float64}" DBFTables.write(tempname(), [(; x = rand(5))])
         @test_throws Exception DBFTables.write(tempname(), [(; x = rand(999))])
