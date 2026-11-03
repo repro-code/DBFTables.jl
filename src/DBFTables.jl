@@ -436,8 +436,11 @@ function Base.getproperty(dbf::Table, name::Symbol)
     nrow = header.records
     @inbounds field = getfields(dbf)[col]
     str = getstrings(dbf)
-    FT = field.type
-    FV = Val{field.dbf_type}()
+    return _column(field.type, Val{field.dbf_type}(), str, col, Int(nrow))
+end
+
+# Function barrier, so the values are converted without a dynamic call for each value
+function _column(::Type{FT}, FV::Val, str, col, nrow) where {FT}
     return @inbounds Union{FT, Missing}[julia_value(FT, FV, str[col, i]) for i = 1:nrow]
 end
 
