@@ -142,9 +142,20 @@ end
 julia_value(o::FieldDescriptor, s::AbstractString) = julia_value(o.type, Val(o.dbf_type), s::AbstractString)
 
 function julia_value_string(s::AbstractString)
-    out = strip(x -> isspace(x) || x == '\0', s)
+    out = strip(x -> isspace(x) || x == '\0', _rstrip_padding(s))
     isempty(out) ? missing : string(out)
 end
+
+# Fields are padded with spaces or NUL bytes. Remove those per byte first,
+# since `strip` goes back one character at a time, which is slow for wide fields.
+function _rstrip_padding(s::String)
+    n = ncodeunits(s)
+    while n > 0 && (codeunit(s, n) == 0x20 || codeunit(s, n) == 0x00)
+        n -= 1
+    end
+    return SubString(s, 1, thisind(s, n))
+end
+_rstrip_padding(s::AbstractString) = s
 
 julia_value(::Type{String}, ::Val{'C'}, s::AbstractString) = julia_value_string(s)
 julia_value(::Type{String}, ::Val{'M'}, s::AbstractString) = julia_value_string(s)

@@ -99,6 +99,16 @@ end
         @test sum(1 for cell in first(dbf)) === 6
     end
 
+    @testset "Strip padding from strings" begin
+        @test DBFTables.julia_value_string("abc   ") == "abc"
+        @test DBFTables.julia_value_string("  abc\0\0") == "abc"
+        @test DBFTables.julia_value_string("∫eˣ  ") == "∫eˣ"
+        @test DBFTables.julia_value_string("abc  \0") == "abc"
+        @test DBFTables.julia_value_string("a b") == "a b"
+        @test ismissing(DBFTables.julia_value_string("  \0 "))
+        @test ismissing(DBFTables.julia_value_string(""))
+    end
+
     @testset "Numeric 20-character Limit Nonsense" begin
         big = BigInt(99999_99999_99999_99999)
         @test DBFTables.dbf_value(Val('N'), 0x01, big) == string(big)
