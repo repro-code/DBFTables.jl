@@ -123,19 +123,28 @@ dbf_value(::Val{'D'}, ::UInt8, ::Missing) = ' ' ^ 8
 dbf_value(::Val, ::UInt8, x) = error("This should be unreachable.  No known conversion from Julia to DBF: $x.")
 
 #-----------------------------------------------------------------------# conversions: DBF-to-Julia
+"""
+Call `f(T, Val(dbf_type))` with the Julia type `T` that a DBF type code is read as.
+The list of codes is fixed, so the compiler knows every call to `f`, which
+`juliac --trim` needs. Unknown codes are read as strings.
+"""
+function with_julia_type(f::F, dbf_type::Char, ndec::UInt8) where {F}
+    dbf_type == 'C' && return f(String, Val('C'))
+    dbf_type == 'D' && return f(Date, Val('D'))
+    dbf_type == 'N' && return ndec > 0 ? f(Float64, Val('N')) : f(Int, Val('N'))
+    dbf_type == 'F' && return f(Float64, Val('F'))
+    dbf_type == 'O' && return f(Float64, Val('O'))
+    dbf_type == 'I' && return f(Int32, Val('I'))
+    dbf_type == '+' && return f(Int64, Val('+'))
+    dbf_type == 'L' && return f(Bool, Val('L'))
+    dbf_type == 'M' && return f(String, Val('M'))
+    return f(String, Val('C'))
+end
+
 "Get the Julia type from the DBF type code and the decimal count"
-julia_type(::Val{'C'}, ndec::UInt8) = String
-julia_type(::Val{'D'}, ndec::UInt8) = Date
-julia_type(::Val{'N'}, ndec::UInt8) = ndec > 0 ? Float64 : Int
-julia_type(::Val{'F'}, ndec::UInt8) = Float64
-julia_type(::Val{'O'}, ndec::UInt8) = Float64
-julia_type(::Val{'I'}, ndec::UInt8) = Int32
-julia_type(::Val{'+'}, ndec::UInt8) = Int64
-julia_type(::Val{'L'}, ndec::UInt8) = Bool
-julia_type(::Val{'M'}, ndec::UInt8) = String
-function julia_type(::Val{T}, ndec::UInt8) where {T}
-    @warn "Unknown DBF type code '$T'.  Data will be loaded as `String"
-    String
+function julia_type(dbf_type::Char, ndec::UInt8)
+    dbf_type in "CDNFOI+LM" || @warn "Unknown DBF type code '$dbf_type'.  Data will be loaded as `String`"
+    return with_julia_type((T, _) -> T, dbf_type, ndec)
 end
 
 
@@ -195,7 +204,7 @@ function read_dbf_field(io::IO)
     length = read(io, UInt8)
     ndec = read(io, UInt8)
     skip(io, 14)  # reserved
-    type = julia_type(Val(dbf_type), ndec)
+    type = julia_type(dbf_type, ndec)
     return FieldDescriptor(name, type, dbf_type, length, ndec)
 end
 
@@ -425,7 +434,7 @@ function Tables.schema(dbf::Table)
 end
 
 "List all available DBF column names"
-Base.propertynames(dbf::Table) = getfield.(getfield(dbf, :header).fields, :name)
+Base.propertynames(dbf::Table) = Symbol[field.name for field in getfields(dbf)]
 Tables.columnnames(row::Row) = propertynames(gettable(row))
 
 "Create a copy of an entire DBF column as a Vector. Usage: `dbf.myfield`"
@@ -440,6 +449,45 @@ function Base.getproperty(dbf::Table, name::Symbol)
     FV = Val{field.dbf_type}()
     return @inbounds Union{FT, Missing}[julia_value(FT, FV, str[col, i]) for i = 1:nrow]
 end
+
+"""
+    DBFTables.withcolumn(f, dbf::DBFTables.Table, name::Symbol)
+    DBFTables.withcolumn(f, dbf::DBFTables.Table, i::Integer)
+
+Return `f(column)`, where `column` is a copy of a column as a `Vector{Union{T, Missing}}`.
+`T` is `String`, `Float64`, `Int64`, `Int32`, `Bool` or `Date`, and `f` is compiled
+for each of them. Unlike `dbf.name`, the compiler then knows the type of the result,
+which programs built with `juliac --trim` need.
+
+```julia
+nmissing = DBFTables.withcolumn(column -> count(ismissing, column), dbf, :name)
+```
+"""
+function withcolumn(f::F, dbf::Table, name::Symbol) where {F}
+    col = get(getheader(dbf).fieldcolumns, name, nothing)
+    col === nothing && throw(ArgumentError("Column not present: $name"))
+    return withcolumn(f, dbf, col)
+end
+
+function withcolumn(f::F, dbf::Table, col::Integer) where {F}
+    field = getfields(dbf)[col]
+    str = getstrings(dbf)
+    nrow = length(dbf)
+    # `::Type{FT}` makes Julia compile this for each type; a do-block would get `FT::Type`
+    column = function (::Type{FT}, FV::Val) where {FT}
+        return f(@inbounds Union{FT, Missing}[julia_value(FT, FV, str[col, i]) for i = 1:nrow])
+    end
+    return with_julia_type(column, field.dbf_type, field.ndec)
+end
+
+"Type-stable column access from the Tables.jl interface: `T` is the column eltype from `Tables.schema`"
+function Tables.getcolumn(dbf::Table, ::Type{T}, i::Int, nm::Symbol) where {T}
+    FT = getfields(dbf)[i].type
+    Union{FT, Missing} === T || throw(ArgumentError("Column $nm has eltype $(Union{FT, Missing}), not $T"))
+    return withcolumn(column -> column::Vector{T}, dbf, i)
+end
+
+Tables.columnindex(dbf::Table, name::Symbol) = get(getheader(dbf).fieldcolumns, name, 0)
 
 
 Base.write(io::IO, dbf::Table) = Base.write(io, getfield(dbf, :header), getfield(dbf, :data), 0x1a)

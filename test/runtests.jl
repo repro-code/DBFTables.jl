@@ -111,4 +111,24 @@ end
         @test_warn "DBF limitation" DBFTables.dbf_value(Val('N'), 0x01, prevfloat(Inf))
         @test_warn "DBF limitation" DBFTables.dbf_value(Val('N'), 0x01, nextfloat(-Inf))
     end
+
+    @testset "Column access with known types" begin
+        @test propertynames(dbf) isa Vector{Symbol}
+        @test DBFTables.julia_type('N', 0x01) === Float64
+        @test (@test_warn "Unknown DBF type code" DBFTables.julia_type('X', 0x00)) === String
+
+        # `withcolumn` passes a concretely typed column, so the result type is inferred
+        @test DBFTables.withcolumn(identity, dbf, :e) isa Vector{Union{Float64, Missing}}
+        @test isequal(DBFTables.withcolumn(identity, dbf, :b), dbf.b)
+        @test @inferred(DBFTables.withcolumn(length, dbf, :d)) == 4
+        @test DBFTables.withcolumn(column -> count(ismissing, column), dbf, 1) == 1
+        @test_throws ArgumentError DBFTables.withcolumn(identity, dbf, :nonexistent)
+
+        # typed access from the Tables.jl interface
+        i = Tables.columnindex(dbf, :e)
+        @test i == 5
+        @test Tables.columnindex(dbf, :nonexistent) == 0
+        @test isequal(@inferred(Tables.getcolumn(dbf, Union{Float64, Missing}, i, :e)), dbf.e)
+        @test_throws ArgumentError Tables.getcolumn(dbf, Union{Int, Missing}, i, :e)
+    end
 end
